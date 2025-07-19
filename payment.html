@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Firebase Cart with Razorpay</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+<div class="max-w-4xl mx-auto p-6">
+  <h1 class="text-3xl font-bold mb-4 text-center">🛒 Stylish Firebase Cart</h1>
+
+  <!-- 🔐 Login -->
+  <div id="loginSection" class="mb-6">
+    <input type="email" id="email" placeholder="Email" class="p-2 border rounded w-full mb-2">
+    <input type="password" id="password" placeholder="Password" class="p-2 border rounded w-full mb-2">
+    <button onclick="login()" class="bg-blue-600 text-white px-4 py-2 rounded w-full">Login</button>
+  </div>
+
+  <!-- 🛍️ Cart Section -->
+  <div id="cartSection" class="hidden">
+    <h2 class="text-xl font-semibold mb-3">Products</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6" id="productList"></div>
+
+    <h2 class="text-xl font-semibold mb-2">Your Cart</h2>
+    <ul id="cartItems" class="mb-4"></ul>
+    <p class="font-bold text-lg">Total: ₹<span id="totalPrice">0</span></p>
+
+    <button onclick="checkout()" class="mt-4 bg-indigo-600 text-white px-5 py-2 rounded">Checkout with Razorpay</button>
+  </div>
+</div>
+
+<script>
+  // ✅ Firebase Config
+  const firebaseConfig = {
+      apiKey: "AIzaSyAq-Yxaccz-Ia6o9NSTC4Fm-PM02DbvIt0",
+      authDomain: "otp-verification-cb472.firebaseapp.com",
+      databaseURL: "https://otp-verification-cb472-default-rtdb.firebaseio.com",
+      projectId: "otp-verification-cb472",
+      storageBucket: "otp-verification-cb472.appspot.com",
+      messagingSenderId: "939280162949",
+      appId: "1:939280162949:web:89b969538a7f7f0e54c9ec"
+    };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.database();
+
+  const products = [
+    { id: 1, name: "T-Shirt", price: 299 },
+    { id: 2, name: "Jeans", price: 799 },
+    { id: 3, name: "Sneakers", price: 1499 }
+  ];
+
+  let currentUserUID = null;
+  let currentTotal = 0;
+
+  const productList = document.getElementById("productList");
+  const cartItems = document.getElementById("cartItems");
+  const totalPrice = document.getElementById("totalPrice");
+
+  function renderProducts() {
+    productList.innerHTML = '';
+    products.forEach(p => {
+      const card = document.createElement("div");
+      card.className = "bg-white shadow-md rounded p-4 text-center";
+      card.innerHTML = `
+        <h3 class="font-semibold text-lg">${p.name}</h3>
+        <p class="text-gray-600">₹${p.price}</p>
+        <button onclick="addToCart(${p.id})" class="mt-2 bg-green-600 text-white px-3 py-1 rounded">Add to Cart</button>
+      `;
+      productList.appendChild(card);
+    });
+  }
+
+  function addToCart(productId) {
+    const product = products.find(p => p.id === productId);
+    const cartRef = db.ref(`carts/${currentUserUID}/${productId}`);
+    cartRef.once("value").then(snapshot => {
+      const quantity = snapshot.val()?.quantity || 0;
+      cartRef.set({
+        name: product.name,
+        price: product.price,
+        quantity: quantity + 1
+      });
+    });
+  }
+
+  function updateCart() {
+    db.ref(`carts/${currentUserUID}`).on("value", snapshot => {
+      cartItems.innerHTML = "";
+      let total = 0;
+      snapshot.forEach(child => {
+        const item = child.val();
+        const li = document.createElement("li");
+        li.className = "mb-2 flex justify-between items-center";
+        li.innerHTML = `
+          <span>${item.name} × ${item.quantity}</span>
+          <button onclick="removeFromCart(${child.key})" class="text-red-500">❌</button>
+        `;
+        total += item.price * item.quantity;
+        cartItems.appendChild(li);
+      });
+      currentTotal = total;
+      totalPrice.textContent = total;
+    });
+  }
+
+  function removeFromCart(productId) {
+    db.ref(`carts/${currentUserUID}/${productId}`).remove();
+  }
+
+  function login() {
+    const email = document.getElementById("email").value;
+    const pass = document.getElementById("password").value;
+    auth.signInWithEmailAndPassword(email, pass)
+      .then(userCredential => {
+        currentUserUID = userCredential.user.uid;
+        document.getElementById("loginSection").style.display = "none";
+        document.getElementById("cartSection").classList.remove("hidden");
+        renderProducts();
+        updateCart();
+      })
+      .catch(error => {
+        alert("Login failed: " + error.message);
+      });
+  }
+
+  // 💳 Razorpay Checkout
+  function checkout() {
+    if (currentTotal <= 0) {
+      alert("Your cart is empty!");
+      return;
+    }
+
+    const options = {
+      key: "YOUR_RAZORPAY_KEY_ID", // 🔑 Replace with your Razorpay Key
+      amount: currentTotal * 100, // amount in paise
+      currency: "INR",
+      name: "My Shop",
+      description: "Cart Payment",
+      image: "https://your-logo-url.com/logo.png",
+      handler: function (response) {
+        alert("Payment Success! Razorpay ID: " + response.razorpay_payment_id);
+        db.ref(`carts/${currentUserUID}`).remove(); // clear cart
+      },
+      prefill: {
+        name: "Customer Name",
+        email: "customer@example.com",
+        contact: "9999999999"
+      },
+      theme: {
+        color: "#4f46e5"
+      }
+    };
+
+    const rzp = new Razorpay(options);
+    rzp.open();
+  }
+</script>
+
+</body>
+</html>
